@@ -6,13 +6,21 @@
 const functions = require('firebase-functions');
 const { onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
-const { logStart, logComplete, logError, logSuccess } = require('./modules/shared/logger');
+const { logStart, logComplete, logError, logSuccess, logInfo } = require('./modules/shared/logger');
 const { DATA_SOURCES } = require('./modules/shared/config');
 
 // Import inventory modules
 const sosApi = require('./modules/inventory/sosApi');
 const dataProcessor = require('./modules/inventory/dataProcessor');
 const firestoreWriter = require('./modules/inventory/firestoreWriter');
+
+// Import production modules
+const { fetchYesterdayProcesses, fetchRecentProcesses } = require('./modules/production/processApi');
+const { 
+  analyzeProcessTransactionStructure, 
+  extractProductionBatches,
+  generateCostDataRecommendations 
+} = require('./modules/production/productionAnalyzer');
 
 /**
  * MANUAL EXECUTION: Run inventory snapshot manually
@@ -227,6 +235,137 @@ exports.testFirestoreConnection = onRequest({
       success: false,
       message: 'Firestore connection test failed',
       error: error.message
+    });
+  }
+});
+
+/**
+ * HTTP Cloud Function to explore SOS Process API capabilities
+ * Usage: GET /exploreProcessAPI
+ * Purpose: Test what cost data is available in SOS process transactions
+ */
+exports.exploreProcessAPI = functions.https.onRequest(async (req, res) => {
+  try {
+    logInfo('Starting SOS Process API exploration...');
+    
+    // Fetch recent data for analysis
+    const transactions = await fetchRecentProcesses(7); // Last 7 days
+    
+    if (!transactions || transactions.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No process transactions found in last 7 days',
+        recommendations: {
+          nextSteps: ['Check if production entries exist in SOS', 'Verify API permissions', 'Try different date range']
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Analyze transaction structure
+    const structureAnalysis = analyzeProcessTransactionStructure(transactions);
+    
+    // Extract production batches
+    const productionSummary = extractProductionBatches(transactions);
+    
+    // Generate recommendations
+    const recommendations = generateCostDataRecommendations(structureAnalysis);
+    
+    logInfo(`Analysis complete: ${transactions.length} transactions analyzed`);
+    logInfo(`Cost data route: ${recommendations.dataRoute}`);
+    
+    res.status(200).json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      analysis: {
+        structureAnalysis,
+        productionSummary,
+        recommendations
+      },
+      rawSample: transactions[0] // Include first transaction for manual inspection
+    });
+    
+  } catch (error) {
+    logError('Process API exploration failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * HTTP Cloud Function to get yesterday's production data
+ * Usage: GET /getYesterdayProduction  
+ * Purpose: Fetch and format yesterday's production for dashboard
+ */
+exports.getYesterdayProduction = functions.https.onRequest(async (req, res) => {
+  try {
+    logInfo('Fetching yesterday\'s production data...');
+    
+    const transactions = await fetchYesterdayProcesses();
+    
+    if (!transactions || transactions.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No production data found for yesterday',
+        data: {
+          totalBatches: 0,
+          products: {},
+          date: new Date(Date.now() - 24*60*60*1000).toISOString().split('T')[0]
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    const productionSummary = extractProductionBatches(transactions);
+    
+    logInfo(`Yesterday's production: ${productionSummary.totalBatches} batches, ${Object.keys(productionSummary.products).length} products`);
+    
+    res.status(200).json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      data: productionSummary
+    });
+    
+  } catch (error) {
+    logError('Failed to fetch yesterday\'s production:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * HTTP Cloud Function for quick API connection test
+ * Usage: GET /testProcessAPI
+ * Purpose: Verify SOS process API connection works
+ */
+exports.testProcessAPI = functions.https.onRequest(async (req, res) => {
+  try {
+    logInfo('Testing SOS Process API connection...');
+    
+    // Call fetchYesterdayProcesses directly instead of recursive call
+    const transactions = await fetchYesterdayProcesses();
+    
+    res.status(200).json({
+      success: true,
+      message: 'Process API connection successful',
+      transactionCount: transactions.length,
+      sampleTransaction: transactions[0] || null,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    logError('Process API test failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      details: error.stack,
+      timestamp: new Date().toISOString()
     });
   }
 });

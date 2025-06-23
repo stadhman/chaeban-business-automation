@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chaeban Ice Cream - Inventory Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: white;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+        }
+
+        .card-title {
+            font-size: 0.9rem;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .card-value {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: #1f2937;
+            line-height: 1;
+        }
+
+        .status-card {
+            border-left: 4px solid #ef4444;
+        }
+
+        .value-card {
+            border-left: 4px solid #22c55e;
+        }
+
+        .items-card {
+            border-left: 4px solid #3b82f6;
+        }
+
+        .data-table {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .table-header {
+            background: linear-gradient(135deg, #1f2937 0%, #374151 100%);
+            color: white;
+            padding: 20px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .table-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .filter-controls {
+            display: flex;
+            gap: 12px;
+        }
+
+        .filter-select, .search-input {
+            padding: 8px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 0.875rem;
+        }
+
+        .export-btn {
+            padding: 8px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: white;
+            font-size: 0.875rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .export-btn:hover {
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3);
+        }
+
+        .filter-select option {
+            background: #374151;
+            color: white;
+        }
+
+        .search-input::placeholder {
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .table-content {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        th {
+            background: #f9fafb;
+            font-weight: 600;
+            color: #374151;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        td {
+            color: #1f2937;
+            font-size: 0.875rem;
+        }
+
+        tr:hover {
+            background: rgba(59, 130, 246, 0.05);
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .status-ok {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .status-negative-quantity {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .status-negative-available {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .status-negative-value,
+        .status-no-cost-basis {
+            background: #fde2e2;
+            color: #991b1b;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 1.1rem;
+        }
+
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .filter-controls {
+                flex-direction: column;
+            }
+            
+            .table-content {
+                max-height: 400px;
+            }
+            
+            th, td {
+                padding: 8px 12px;
+                font-size: 0.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🍦 Inventory Dashboard</h1>
+            <p class="subtitle">Real-time inventory monitoring powered by Firebase</p>
+        </header>
+
+        <div id="loading" class="loading">Loading inventory data...</div>
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="dashboard" style="display: none;">
+            <div class="dashboard-grid">
+                <div class="card items-card">
+                    <div class="card-title">Total Items</div>
+                    <div class="card-value" id="totalItems">-</div>
+                </div>
+                <div class="card value-card">
+                    <div class="card-title">Total Value</div>
+                    <div class="card-value" id="totalValue">-</div>
+                </div>
+                <div class="card status-card">
+                    <div class="card-title">Items with Issues</div>
+                    <div class="card-value" id="itemsWithIssues">-</div>
+                </div>
+            </div>
+
+            <div class="data-table">
+                <div class="table-header">
+                    <div class="table-title">Inventory Items</div>
+                    <div class="filter-controls">
+                        <button id="exportCsvBtn" class="export-btn">📊 Export CSV</button>
+                        <input type="text" id="searchInput" class="search-input" placeholder="Search items...">
+                        <select id="statusFilter" class="filter-select">
+                            <option value="">All Status</option>
+                            <option value="OK">OK</option>
+                            <option value="NEGATIVE_QUANTITY">Negative Quantity</option>
+                            <option value="NEGATIVE_AVAILABLE">Negative Available</option>
+                            <option value="NEGATIVE_VALUE">Negative Value</option>
+                            <option value="NO_COST_BASIS">No Cost Basis</option>
+                        </select>
+                        <select id="categoryFilter" class="filter-select">
+                            <option value="">All Categories</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="table-content">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Name</th>
+                                <th>SKU</th>
+                                <th>Category</th>
+                                <th>On Hand</th>
+                                <th>Available</th>
+                                <th>Avg Cost</th>
+                                <th>Total Value</th>
+                                <th>Status</th>
+                                <th>Last Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inventoryTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let inventoryData = [];
+        let filteredData = [];
+
+        // Format currency values
+        function formatCurrency(value) {
+            if (value === null || value === undefined || isNaN(value)) return '$0.00';
+            // Handle negative zero display issue
+            if (value === 0 || value === -0) value = 0;
+            return new Intl.NumberFormat('en-CA', {
+                style: 'currency',
+                currency: 'CAD'
+            }).format(value);
+        }
+
+        // Format numbers
+        function formatNumber(value) {
+            if (value === null || value === undefined || isNaN(value)) return '0';
+            return new Intl.NumberFormat('en-CA', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }).format(value);
+        }
+
+        // Format Firebase timestamp
+        function formatTimestamp(timestamp) {
+            if (!timestamp) return 'N/A';
+            
+            // Handle Firebase timestamp format
+            if (timestamp._seconds) {
+                const date = new Date(timestamp._seconds * 1000);
+                return date.toLocaleDateString('en-CA') + ' ' + date.toLocaleTimeString('en-CA', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }
+            
+            // Handle regular timestamp
+            if (timestamp.toDate) {
+                return timestamp.toDate().toLocaleDateString('en-CA') + ' ' + 
+                       timestamp.toDate().toLocaleTimeString('en-CA', {
+                           hour: '2-digit',
+                           minute: '2-digit'
+                       });
+            }
+            
+            return 'N/A';
+        }
+
+        // Get status badge HTML
+        function getStatusBadge(status) {
+            const statusClass = status.toLowerCase().replace(/_/g, '-');
+            return `<span class="status-badge status-${statusClass}">${status.replace(/_/g, ' ')}</span>`;
+        }
+
+        // Load and display inventory data
+        async function loadInventoryData() {
+            try {
+                const response = await fetch('https://us-central1-chaeban-business-automation.cloudfunctions.net/getInventoryDashboardData');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                if (!result.success) {
+                    throw new Error(result.error || 'API returned error');
+                }
+
+                inventoryData = result.data.current.items || [];
+                console.log('Loaded items:', inventoryData.length);
+                
+                displayDashboard();
+                populateFilters();
+                filterData();
+                
+            } catch (error) {
+                console.error('Error loading inventory data:', error);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = `Error loading data: ${error.message}`;
+            }
+        }
+
+        // Display dashboard summary
+        function displayDashboard() {
+            const totalItems = inventoryData.length;
+            const totalValue = inventoryData.reduce((sum, item) => {
+                const value = item.cost_basis || 0;  // Use 'cost_basis' which has correct negative values
+                return sum + (isNaN(value) ? 0 : value);
+            }, 0);
+            
+            const itemsWithIssues = inventoryData.filter(item => item.status !== 'OK').length;
+
+            document.getElementById('totalItems').textContent = totalItems.toLocaleString();
+            document.getElementById('totalValue').textContent = formatCurrency(totalValue);
+            document.getElementById('itemsWithIssues').textContent = itemsWithIssues.toLocaleString();
+
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'block';
+        }
+
+        // Populate filter dropdowns
+        function populateFilters() {
+            const categories = [...new Set(inventoryData.map(item => item.category).filter(Boolean))].sort();
+            const categoryFilter = document.getElementById('categoryFilter');
+            
+            categories.forEach(category => {
+                const option = document.createElement('option');
+                option.value = category;
+                option.textContent = category;
+                categoryFilter.appendChild(option);
+            });
+        }
+
+        // Filter and display data
+        function filterData() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const statusFilter = document.getElementById('statusFilter').value;
+            const categoryFilter = document.getElementById('categoryFilter').value;
+
+            filteredData = inventoryData.filter(item => {
+                const matchesSearch = !searchTerm || 
+                    (item.name && item.name.toLowerCase().includes(searchTerm)) ||
+                    (item.sku && item.sku.toLowerCase().includes(searchTerm)) ||
+                    (item.full_name && item.full_name.toLowerCase().includes(searchTerm)) ||
+                    (item._raw_id && item._raw_id.toString().includes(searchTerm));
+                
+                const matchesStatus = !statusFilter || item.status === statusFilter;
+                const matchesCategory = !categoryFilter || item.category === categoryFilter;
+
+                return matchesSearch && matchesStatus && matchesCategory;
+            });
+
+            displayTable();
+        }
+
+        // Display filtered data in table
+        function displayTable() {
+            const tbody = document.getElementById('inventoryTableBody');
+            tbody.innerHTML = '';
+
+            // Sort by status (issues first), then by name
+            const sortedData = [...filteredData].sort((a, b) => {
+                if (a.status !== 'OK' && b.status === 'OK') return -1;
+                if (a.status === 'OK' && b.status !== 'OK') return 1;
+                return (a.name || '').localeCompare(b.name || '');
+            });
+
+            sortedData.forEach(item => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td><strong>${item._raw_id || 'N/A'}</strong></td>
+                    <td>${item.name || 'N/A'}</td>
+                    <td>${item.sku || 'N/A'}</td>
+                    <td>${item.category || 'Uncategorized'}</td>
+                    <td>${formatNumber(item.onHand || 0)}</td>
+                    <td>${formatNumber(item.available || 0)}</td>
+                    <td>${formatCurrency(item.averageCost || 0)}</td>
+                    <td>${formatCurrency(item.cost_basis || 0)}</td>
+                    <td>${getStatusBadge(item.status || 'OK')}</td>
+                    <td>${formatTimestamp(item.last_updated)}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // Export filtered data to CSV
+        function exportToCSV() {
+            // Use currently filtered data
+            const dataToExport = filteredData.length > 0 ? filteredData : inventoryData;
+            
+            // CSV headers
+            const headers = [
+                'SOS_ID',
+                'Name', 
+                'SKU',
+                'Category',
+                'On_Hand',
+                'Available', 
+                'Average_Cost',
+                'Total_Value',
+                'Status',
+                'Last_Updated'
+            ];
+            
+            // Convert data to CSV rows
+            const csvRows = [headers.join(',')];
+            
+            dataToExport.forEach(item => {
+                const row = [
+                    item._raw_id || 'N/A',
+                    `"${(item.name || 'N/A').replace(/"/g, '""')}"`, // Escape quotes in names
+                    item.sku || 'N/A',
+                    item.category || 'Uncategorized',
+                    item.onHand || 0,
+                    item.available || 0,
+                    item.averageCost || 0,
+                    item.cost_basis || 0,
+                    item.status || 'OK',
+                    formatTimestamp(item.last_updated).replace(/,/g, '') // Remove commas from date
+                ];
+                csvRows.push(row.join(','));
+            });
+            
+            // Create and download CSV file
+            const csvContent = csvRows.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            
+            if (link.download !== undefined) {
+                const url = URL.createObjectURL(blob);
+                link.setAttribute('href', url);
+                
+                // Generate filename with current date
+                const now = new Date();
+                const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+                const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-'); // HH-MM-SS format
+                
+                link.setAttribute('download', `inventory_export_${dateStr}_${timeStr}.csv`);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // Show success message
+                alert(`✅ Exported ${dataToExport.length} items to CSV successfully!`);
+            }
+        }
+
+        // Event listeners
+        document.getElementById('searchInput').addEventListener('input', filterData);
+        document.getElementById('statusFilter').addEventListener('change', filterData);
+        document.getElementById('categoryFilter').addEventListener('change', filterData);
+        document.getElementById('exportCsvBtn').addEventListener('click', exportToCSV);
+
+        // Load data on page load
+        loadInventoryData();
+
+        // Refresh data every 5 minutes
+        setInterval(loadInventoryData, 5 * 60 * 1000);
+    </script>
+</body>
+</html>

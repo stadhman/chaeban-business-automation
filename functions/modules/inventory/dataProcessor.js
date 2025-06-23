@@ -34,18 +34,26 @@ function processInventoryItems(rawItems, fetchTimestamp = null) {
       throw new Error('No items to process');
     }
 
-    // Log sample of raw items
-    logInfo(DATA_SOURCES.SOS_INVENTORY, 'Sample raw items:', {
-      totalItems: rawItems.length,
-      sampleItem: rawItems[0],
-      itemKeys: Object.keys(rawItems[0])
-    });
+    // Filter out archived items AND non-inventory items
+    const activeInventoryItems = rawItems.filter(item => 
+      item.archived !== true && 
+      item.type !== 'Non-inventory Item'
+    );
 
+    // Log filtering results
+    logInfo(DATA_SOURCES.SOS_INVENTORY, 'Filtered archived and non-inventory items:', {
+      totalItems: rawItems.length,
+      archivedItems: rawItems.filter(item => item.archived === true).length,
+      nonInventoryItems: rawItems.filter(item => item.type === 'Non-inventory Item').length,
+      activeInventoryItems: activeInventoryItems.length,
+      bothFiltered: rawItems.filter(item => item.archived === true || item.type === 'Non-inventory Item').length,
+      sampleItem: activeInventoryItems[0] || null
+    });
     // Track invalid items
     const invalidItems = [];
     let processedCount = 0;
 
-    for (const rawItem of rawItems) {
+    for (const rawItem of activeInventoryItems) {
       try {
         // Basic validation
         if (!rawItem) {
@@ -144,18 +152,18 @@ function processInventoryItem(rawItem, timestamp) {
       status = INVENTORY_STATUS.NO_COST_BASIS;
     }
 
-    // Generate a valid document ID
+    // Generate a valid document ID - FIXED VERSION
     let itemId = null;
     
-    // Try to use existing ID first
-    if (rawItem.id && typeof rawItem.id === 'string' && rawItem.id.trim() !== '') {
-      itemId = rawItem.id.trim();
+    // Use SOS ID directly (convert number to string)
+    if (rawItem.id) {
+      itemId = `item_${rawItem.id}`;
     }
-    // Try SKU next
+    // Fallback to SKU if no ID
     else if (rawItem.sku && typeof rawItem.sku === 'string' && rawItem.sku.trim() !== '') {
       itemId = `sku_${rawItem.sku.trim()}`;
     }
-    // Generate a unique ID as last resort
+    // Last resort - generate unique ID
     else {
       const timestampStr = timestamp.getTime().toString(36);
       const randomStr = Math.random().toString(36).substring(2, 8);
@@ -171,14 +179,15 @@ function processInventoryItem(rawItem, timestamp) {
     itemId = itemId.replace(/[^a-zA-Z0-9_-]/g, '_');
 
     // Safely handle category
-    let category = '';
+    let category = 'Uncategorized';
     if (rawItem.category) {
       if (typeof rawItem.category === 'string') {
         category = rawItem.category.trim();
       } else if (typeof rawItem.category === 'number') {
         category = rawItem.category.toString();
-      } else {
-        category = 'Uncategorized';
+      } else if (typeof rawItem.category === 'object' && rawItem.category.name) {
+        // Extract name from SOS category object: { id: 559, name: "Production Input" }
+        category = rawItem.category.name.trim();
       }
     }
 

@@ -1,7 +1,6 @@
 /**
- * Firestore Writer Module
- * Handles all database operations for inventory data
- * Implements the designed collection structure for optimal querying
+ * Firestore Writer Module - FIXED ACTIVE/ARCHIVED LIFECYCLE
+ * Properly preserves archived items while updating active ones
  */
 
 const admin = require('firebase-admin');
@@ -16,7 +15,7 @@ const db = admin.firestore();
 
 /**
  * Write complete inventory snapshot to Firestore using chunked batches
- * Implements efficient batch processing for large datasets
+ * FIXED: Properly manages active/archived lifecycle without deleting archived items
  */
 async function writeInventorySnapshot(processedData) {
   const startTime = Date.now();
@@ -47,6 +46,10 @@ async function writeInventorySnapshot(processedData) {
       sampleItem: items[0],
       categories: extractUniqueCategories(items)
     });
+    
+    // STEP 1: Get existing items and mark them as archived
+    const currentItemIds = await markCurrentItemsAsArchived(items, timestamp);
+    logInfo(DATA_SOURCES.SOS_INVENTORY, `Processing ${items.length} new items, ${currentItemIds.size} existing items marked as archived`);
     
     // Create parent documents first
     const inventoryRef = db.collection('inventory');
@@ -144,53 +147,51 @@ async function writeInventorySnapshot(processedData) {
           throw new Error(`Invalid item_id for item: ${JSON.stringify(item)}`);
         }
         
-        // Transform item data for Firestore
+        // Transform item data for Firestore snapshot
         const transformedItem = {
           ...item,
-          // Transform field names to match dashboard expectations
           onHand: parseFloat(item.qty_on_hand) || 0,
           available: parseFloat(item.qty_available) || 0,
-          averageCost: parseFloat(item.cost_basis) || 0,
-          // Ensure category is valid
+          averageCost: parseFloat(item.average_cost) || 0,
+          cost_basis: parseFloat(item.cost_basis) || 0,
           category: item.category && typeof item.category === 'string' ? item.category.trim() : 'Uncategorized',
+          item_status: 'active',
           last_updated: admin.firestore.Timestamp.fromDate(timestamp)
         };
         
-        // Remove original field names to avoid confusion
         delete transformedItem.qty_on_hand;
         delete transformedItem.qty_available;
-        delete transformedItem.cost_basis;
         delete transformedItem.average_cost;
         
         const itemRef = itemsCollectionRef.doc(item.item_id);
         batch.set(itemRef, transformedItem);
       });
       
-      // Update current inventory for items in this chunk
+      // FIXED: Update current inventory items properly
       chunk.forEach(item => {
         const currentItemRef = db.collection('inventory')
           .doc('current')
           .collection('items')
           .doc(item.item_id);
         
-        // Transform item data for Firestore
+        // Transform item data for current collection
         const transformedItem = {
           ...item,
-          // Transform field names to match dashboard expectations
           onHand: parseFloat(item.qty_on_hand) || 0,
           available: parseFloat(item.qty_available) || 0,
-          averageCost: parseFloat(item.cost_basis) || 0,
-          // Ensure category is valid
+          averageCost: parseFloat(item.average_cost) || 0,
+          cost_basis: parseFloat(item.cost_basis) || 0,
           category: item.category && typeof item.category === 'string' ? item.category.trim() : 'Uncategorized',
+          item_status: 'active',
           last_updated: admin.firestore.Timestamp.fromDate(timestamp)
         };
         
-        // Remove original field names to avoid confusion
         delete transformedItem.qty_on_hand;
         delete transformedItem.qty_available;
-        delete transformedItem.cost_basis;
         delete transformedItem.average_cost;
         
+        // FIXED: Use set() which will overwrite existing items (including archived ones)
+        // This is correct because items in the current snapshot should be active
         batch.set(currentItemRef, transformedItem);
       });
       
@@ -206,7 +207,6 @@ async function writeInventorySnapshot(processedData) {
       }
     }
     
-    // Remove the metadata subcollection update since we're using the main document
     const duration = Date.now() - startTime;
     logComplete(DATA_SOURCES.SOS_INVENTORY, 'inventory snapshot write', duration);
     logSuccess(DATA_SOURCES.SOS_INVENTORY, 
@@ -227,14 +227,94 @@ async function writeInventorySnapshot(processedData) {
 }
 
 /**
- * Get current inventory data for dashboard
- * Optimized for real-time dashboard queries
+ * FIXED: Mark current items as archived, but only those NOT in the new snapshot
+ * This prevents items from being deleted and preserves archived status
+ */
+async function markCurrentItemsAsArchived(newItems, timestamp) {
+  logInfo(DATA_SOURCES.SOS_INVENTORY, 'Checking existing items for archival');
+  
+  try {
+    const currentRef = db.collection('inventory').doc('current').collection('items');
+    const existingItems = await currentRef.get();
+    
+    if (existingItems.empty) {
+      logInfo(DATA_SOURCES.SOS_INVENTORY, 'No existing items to check for archival');
+      return new Set();
+    }
+    
+    // Create set of new item IDs for fast lookup
+    const newItemIds = new Set(newItems.map(item => item.item_id));
+    
+    // Find items that exist currently but are NOT in the new snapshot
+    const itemsToArchive = [];
+    const existingItemIds = new Set();
+    
+    existingItems.forEach(doc => {
+      const itemId = doc.id;
+      existingItemIds.add(itemId);
+      
+      // If this item is NOT in the new snapshot, it should be archived
+      if (!newItemIds.has(itemId)) {
+        itemsToArchive.push(doc);
+      }
+    });
+    
+    logInfo(DATA_SOURCES.SOS_INVENTORY, `Found ${existingItems.size} existing items, ${itemsToArchive.length} need archiving, ${newItemIds.size} new/updated items`);
+    
+    if (itemsToArchive.length === 0) {
+      logInfo(DATA_SOURCES.SOS_INVENTORY, 'No items need archiving - all existing items are in new snapshot');
+      return existingItemIds;
+    }
+    
+    // Archive items that are no longer in the snapshot
+    const batches = [];
+    let currentBatch = db.batch();
+    let operationCount = 0;
+    
+    itemsToArchive.forEach(doc => {
+      currentBatch.update(doc.ref, {
+        item_status: 'archived',
+        archived_at: admin.firestore.Timestamp.fromDate(timestamp)
+      });
+      
+      operationCount++;
+      
+      // Firestore batch limit is 500 operations
+      if (operationCount >= 450) {
+        batches.push(currentBatch);
+        currentBatch = db.batch();
+        operationCount = 0;
+      }
+    });
+    
+    // Add the last batch if it has operations
+    if (operationCount > 0) {
+      batches.push(currentBatch);
+    }
+    
+    // Execute all batches
+    for (let i = 0; i < batches.length; i++) {
+      await batches[i].commit();
+      logInfo(DATA_SOURCES.SOS_INVENTORY, `Archived batch ${i + 1}/${batches.length}`);
+    }
+    
+    logSuccess(DATA_SOURCES.SOS_INVENTORY, `Successfully archived ${itemsToArchive.length} items that are no longer in snapshot`);
+    
+    return existingItemIds;
+    
+  } catch (error) {
+    logError(DATA_SOURCES.SOS_INVENTORY, 'Failed to archive items', error);
+    throw error;
+  }
+}
+
+/**
+ * Get current inventory data for dashboard - ONLY ACTIVE ITEMS
  */
 async function getCurrentInventoryData() {
     try {
         console.log('Starting getCurrentInventoryData...');
         
-        // First, verify the inventory collection exists
         const inventoryRef = db.collection('inventory');
         console.log('Checking inventory collection...');
         
@@ -243,7 +323,6 @@ async function getCurrentInventoryData() {
             console.log('Inventory collection exists:', !inventorySnapshot.empty);
             
             if (inventorySnapshot.empty) {
-                console.log('Inventory collection is empty');
                 return {
                     success: true,
                     data: {
@@ -262,12 +341,8 @@ async function getCurrentInventoryData() {
                 };
             }
             
-            // Check if current document exists
             const currentDoc = await inventoryRef.doc('current').get();
-            console.log('Current document exists:', currentDoc.exists);
-            
             if (!currentDoc.exists) {
-                console.log('Current document does not exist');
                 return {
                     success: true,
                     data: {
@@ -286,12 +361,8 @@ async function getCurrentInventoryData() {
                 };
             }
 
-            // Check if metadata document exists
             const metadataDoc = await inventoryRef.doc('metadata').get();
-            console.log('Metadata document exists:', metadataDoc.exists);
-            
             if (!metadataDoc.exists) {
-                console.log('Metadata document does not exist');
                 return {
                     success: true,
                     data: {
@@ -310,17 +381,18 @@ async function getCurrentInventoryData() {
                 };
             }
 
-            // Get the current items collection
+            // Get ONLY ACTIVE items from current collection
             const currentRef = inventoryRef.doc('current').collection('items');
-            console.log('Attempting to fetch current items...');
+            console.log('Attempting to fetch ACTIVE current items...');
             
             try {
-                const currentSnapshot = await currentRef.get();
-                console.log('Current items fetched successfully. Empty?', currentSnapshot.empty);
-                console.log('Number of items found:', currentSnapshot.size);
+                // FILTER FOR ACTIVE ITEMS ONLY
+                const currentSnapshot = await currentRef.where('item_status', '==', 'active').get();
+                console.log('Active items fetched successfully. Empty?', currentSnapshot.empty);
+                console.log('Number of ACTIVE items found:', currentSnapshot.size);
                 
                 if (currentSnapshot.empty) {
-                    console.log('No current items found in Firestore');
+                    console.log('No active items found in Firestore');
                     return {
                         success: true,
                         data: {
@@ -339,15 +411,6 @@ async function getCurrentInventoryData() {
                     };
                 }
 
-                // Log a sample item for debugging
-                const firstItem = currentSnapshot.docs[0].data();
-                console.log('Sample item structure:', {
-                    id: currentSnapshot.docs[0].id,
-                    hasCategory: !!firstItem.category,
-                    categoryType: typeof firstItem.category,
-                    fields: Object.keys(firstItem)
-                });
-
                 const items = [];
                 const categories = new Set();
                 let totalValue = 0;
@@ -356,30 +419,21 @@ async function getCurrentInventoryData() {
                 let negativeStockItems = 0;
                 let itemsWithIssues = 0;
 
-                console.log('Processing items...');
+                console.log('Processing ACTIVE items...');
                 currentSnapshot.forEach(doc => {
                     try {
                         const data = doc.data();
-                        console.log(`Processing item ${doc.id}:`, {
-                            hasCategory: !!data.category,
-                            categoryType: typeof data.category,
-                            onHand: data.onHand,
-                            available: data.available,
-                            averageCost: data.averageCost
-                        });
 
-                        // Safely handle category
                         const category = typeof data.category === 'string' ? data.category.trim() : 'Uncategorized';
                         if (category) categories.add(category);
 
-                        // Calculate values
                         const onHand = parseFloat(data.onHand) || 0;
                         const available = parseFloat(data.available) || 0;
                         const averageCost = parseFloat(data.averageCost) || 0;
-                        const value = onHand * averageCost;
-                        totalValue += value;
+                        const costBasis = parseFloat(data.cost_basis) || 0;
+                        
+                        totalValue += costBasis;
 
-                        // Count items by status
                         if (onHand < 0) negativeStockItems++;
                         if (available <= 0) outOfStockItems++;
                         if (available > 0 && available <= 10) lowStockItems++;
@@ -388,8 +442,7 @@ async function getCurrentInventoryData() {
                         items.push({
                             id: doc.id,
                             ...data,
-                            category: category,
-                            value: value
+                            category: category
                         });
                     } catch (itemError) {
                         console.error(`Error processing item ${doc.id}:`, itemError);
@@ -397,8 +450,8 @@ async function getCurrentInventoryData() {
                     }
                 });
 
-                console.log('Items processing complete. Summary:', {
-                    totalItems: items.length,
+                console.log('ACTIVE items processing complete. Summary:', {
+                    totalActiveItems: items.length,
                     uniqueCategories: categories.size,
                     totalValue,
                     lowStockItems,
@@ -424,13 +477,8 @@ async function getCurrentInventoryData() {
                     }
                 };
             } catch (error) {
-                console.error('Error fetching current items:', error);
-                console.error('Error details:', {
-                    code: error.code,
-                    message: error.message,
-                    stack: error.stack
-                });
-                throw new Error(`Failed to fetch current items: ${error.message}`);
+                console.error('Error fetching active items:', error);
+                throw new Error(`Failed to fetch active items: ${error.message}`);
             }
         } catch (error) {
             console.error('Error checking inventory collection:', error);
@@ -438,12 +486,6 @@ async function getCurrentInventoryData() {
         }
     } catch (error) {
         console.error('Error in getCurrentInventoryData:', error);
-        console.error('Full error details:', {
-            code: error.code,
-            message: error.message,
-            stack: error.stack,
-            name: error.name
-        });
         return {
             success: false,
             message: 'Failed to fetch dashboard data',
@@ -454,7 +496,6 @@ async function getCurrentInventoryData() {
 
 /**
  * Get historical inventory data for trend analysis
- * Supports date range queries for analytics
  */
 async function getInventoryHistory(startDate, endDate, limit = 30) {
   logInfo(DATA_SOURCES.SOS_INVENTORY, `Fetching inventory history from ${startDate} to ${endDate}`);
@@ -463,7 +504,6 @@ async function getInventoryHistory(startDate, endDate, limit = 30) {
     const startTimestamp = admin.firestore.Timestamp.fromDate(startDate);
     const endTimestamp = admin.firestore.Timestamp.fromDate(endDate);
     
-    // Query snapshot summaries in date range
     const snapshotsQuery = db.collectionGroup('summary')
       .where('timestamp', '>=', startTimestamp)
       .where('timestamp', '<=', endTimestamp)
@@ -482,7 +522,6 @@ async function getInventoryHistory(startDate, endDate, limit = 30) {
     });
     
     logSuccess(DATA_SOURCES.SOS_INVENTORY, 'Successfully fetched inventory history', historicalData.length);
-    
     return historicalData;
     
   } catch (error) {
@@ -492,15 +531,16 @@ async function getInventoryHistory(startDate, endDate, limit = 30) {
 }
 
 /**
- * Get items with specific status for exception reporting
+ * Get items with specific status for exception reporting - ONLY ACTIVE ITEMS
  */
 async function getItemsByStatus(status) {
-  logInfo(DATA_SOURCES.SOS_INVENTORY, `Fetching items with status: ${status}`);
+  logInfo(DATA_SOURCES.SOS_INVENTORY, `Fetching ACTIVE items with status: ${status}`);
   
   try {
     const itemsSnapshot = await db.collection('inventory')
       .doc('current')
       .collection('items')
+      .where('item_status', '==', 'active')
       .where('status', '==', status)
       .get();
     
@@ -513,27 +553,20 @@ async function getItemsByStatus(status) {
       });
     });
     
-    logSuccess(DATA_SOURCES.SOS_INVENTORY, `Found ${items.length} items with status: ${status}`);
+    logSuccess(DATA_SOURCES.SOS_INVENTORY, `Found ${items.length} ACTIVE items with status: ${status}`);
     return items;
     
   } catch (error) {
-    logError(DATA_SOURCES.SOS_INVENTORY, `Failed to fetch items with status: ${status}`, error);
+    logError(DATA_SOURCES.SOS_INVENTORY, `Failed to fetch ACTIVE items with status: ${status}`, error);
     throw error;
   }
 }
 
-/**
- * Utility: Format timestamp for use as Firestore document ID
- * Creates sortable, readable timestamp IDs
- */
 function formatTimestampForId(timestamp) {
   const date = new Date(timestamp);
-  return date.toISOString().replace(/[:.]/g, '-').slice(0, -5); // Remove milliseconds and Z
+  return date.toISOString().replace(/[:.]/g, '-').slice(0, -5);
 }
 
-/**
- * Utility: Extract unique categories from items
- */
 function extractUniqueCategories(items) {
   const categories = new Set();
   items.forEach(item => {
@@ -546,9 +579,6 @@ function extractUniqueCategories(items) {
   return Array.from(categories).sort();
 }
 
-/**
- * Utility: Generate summary from current items
- */
 function generateCurrentSummary(items) {
   const summary = {
     total_items: items.length,
@@ -561,14 +591,11 @@ function generateCurrentSummary(items) {
   const categories = new Set();
   
   items.forEach(item => {
-    // Total value
     summary.total_value += item.cost_basis || 0;
     
-    // Status counts
     const status = item.status || 'UNKNOWN';
     statusCounts[status] = (statusCounts[status] || 0) + 1;
     
-    // Categories - safely handle category values
     if (item.category) {
       if (typeof item.category === 'string') {
         const trimmedCategory = item.category.trim();
@@ -587,14 +614,10 @@ function generateCurrentSummary(items) {
   return summary;
 }
 
-/**
- * Test database connectivity and permissions
- */
 async function testFirestoreConnection() {
   logInfo(DATA_SOURCES.SOS_INVENTORY, 'Testing Firestore connection');
   
   try {
-    // Test basic write permission
     const testRef = db.collection('inventory')
       .doc('test')
       .collection('connection')
@@ -605,15 +628,12 @@ async function testFirestoreConnection() {
       test: true
     });
     
-    // Test read permission for inventory collection
     const inventoryRef = db.collection('inventory');
     const inventoryDoc = await inventoryRef.doc('current').get();
     
-    // Test read permission for items collection
     const itemsRef = inventoryRef.doc('current').collection('items');
     const itemsSnapshot = await itemsRef.limit(1).get();
     
-    // Clean up test document
     await testRef.delete();
     
     return {

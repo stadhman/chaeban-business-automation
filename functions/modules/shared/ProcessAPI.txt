@@ -1,0 +1,141 @@
+// modules/production/processApi.js
+// SOS Process API integration following inventory module patterns
+
+const { SOS_CONFIG } = require('../shared/config');
+const { logInfo, logError, logWarning } = require('../shared/logger');
+
+/**
+ * Fetch process transactions from SOS API with pagination
+ * @param {string} startDate - ISO date string (e.g., '2025-06-20')
+ * @param {string} endDate - ISO date string (e.g., '2025-06-21')
+ * @returns {Array} Array of process transaction objects
+ */
+async function fetchProcessTransactions(startDate, endDate) {
+  const allTransactions = [];
+  let start = 0;
+  let hasMore = true;
+
+  logInfo(`Fetching process transactions from ${startDate} to ${endDate}`);
+
+  while (hasMore) {
+    try {
+      const url = `${SOS_CONFIG.BASE_URL}/process`;
+      const params = new URLSearchParams({
+        start: start.toString(),
+        maxresults: SOS_CONFIG.PAGE_SIZE.toString(),
+        archived: 'false',
+        // Date filtering - may need adjustment based on SOS API
+        startDate: startDate,
+        endDate: endDate
+      });
+
+      logInfo(`Fetching process page: start=${start}, size=${SOS_CONFIG.PAGE_SIZE}`);
+
+      const response = await fetch(`${url}?${params}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${SOS_CONFIG.API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: SOS_CONFIG.TIMEOUT_SECONDS * 1000
+      });
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          logWarning('Rate limited, waiting 30 seconds...');
+          await new Promise(resolve => setTimeout(resolve, 30000));
+          continue;
+        }
+        throw new Error(`SOS Process API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      // Log first transaction structure for analysis
+      if (start === 0 && data.length > 0) {
+        logInfo('Sample process transaction structure:');
+        logInfo(JSON.stringify(data[0], null, 2));
+      }
+
+      allTransactions.push(...data);
+      
+      hasMore = data.length === SOS_CONFIG.PAGE_SIZE;
+      start += SOS_CONFIG.PAGE_SIZE;
+
+      logInfo(`Fetched ${data.length} transactions, total: ${allTransactions.length}`);
+
+      // Rate limiting between requests
+      if (hasMore) {
+        await new Promise(resolve => setTimeout(resolve, SOS_CONFIG.RATE_LIMIT_MS));
+      }
+
+    } catch (error) {
+      logError('Error fetching process transactions:', error);
+      throw error;
+    }
+  }
+
+  logInfo(`Total process transactions fetched: ${allTransactions.length}`);
+  return allTransactions;
+}
+
+/**
+ * Fetch yesterday's process transactions
+ * @returns {Array} Array of process transaction objects
+ */
+async function fetchYesterdayProcesses() {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const dateStr = yesterday.toISOString().split('T')[0];
+  
+  return await fetchProcessTransactions(dateStr, dateStr);
+}
+
+/**
+ * Fetch process transactions for a date range
+ * @param {number} daysBack - Number of days back from today
+ * @returns {Array} Array of process transaction objects
+ */
+async function fetchRecentProcesses(daysBack = 15) {
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - daysBack);
+  
+  const endDateStr = endDate.toISOString().split('T')[0];
+  const startDateStr = startDate.toISOString().split('T')[0];
+  
+  return await fetchProcessTransactions(startDateStr, endDateStr);
+}
+
+/**
+ * Fetch specific date range for production analysis
+ * @param {string} startDate - Start date (YYYY-MM-DD)
+ * @param {string} endDate - End date (YYYY-MM-DD)
+ * @returns {Array} Filtered and validated process transactions
+ */
+async function fetchProductionData(startDate, endDate) {
+  try {
+    const transactions = await fetchProcessTransactions(startDate, endDate);
+    
+    // Filter for valid production transactions
+    const validTransactions = transactions.filter(transaction => {
+      return transaction.outputs && 
+             transaction.outputs.length > 0 && 
+             !transaction.archived;
+    });
+
+    logInfo(`Filtered ${validTransactions.length} valid production transactions from ${transactions.length} total`);
+    return validTransactions;
+
+  } catch (error) {
+    logError('Error fetching production data:', error);
+    throw error;
+  }
+}
+
+module.exports = {
+  fetchProcessTransactions,
+  fetchYesterdayProcesses,
+  fetchRecentProcesses,
+  fetchProductionData
+};

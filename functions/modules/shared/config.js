@@ -35,12 +35,12 @@ const SOS_CONFIG = {
     BASE_URL: 'https://api.sosinventory.com/api/v2',
     ITEM_ENDPOINT: '/item',
     ORDER_ENDPOINT: '/salesorder',
-    PAGE_SIZE: 500,
+    PAGE_SIZE: 200,
     TIMEOUT_SECONDS: 180,
     MAX_RETRIES: 3,
-    THROTTLE_WAIT_MS: 30000,
-    RATE_LIMIT_MS: 100,
-    CONCURRENT_REQUESTS: 3,
+    THROTTLE_WAIT_MS: 50000,
+    RATE_LIMIT_MS: 600,
+    CONCURRENT_REQUESTS: 1,
     BATCH_SIZE: 250
 };
 

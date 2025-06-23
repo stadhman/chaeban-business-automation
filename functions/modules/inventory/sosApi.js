@@ -92,7 +92,7 @@ async function fetchInventoryPage(start = 0, maxResults = 200) {
     params: {
       start: start,
       maxresults: maxResults,
-      archived: 'no' // Only active items
+      archived: 'false' // Only active items
     },
     timeout: SOS_CONFIG.TIMEOUT_SECONDS * 1000
   };

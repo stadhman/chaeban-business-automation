@@ -5,7 +5,7 @@
  */
 
 const functions = require("firebase-functions");
-const {LOG_ACTIONS} = require("../inventory/config");
+const {LOG_ACTIONS} = require("./config");
 
 /**
  * Log an informational message
